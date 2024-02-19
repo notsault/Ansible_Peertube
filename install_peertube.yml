@@ -1,0 +1,75 @@
+---
+- name: Installer et configurer PeerTube
+  hosts: all
+  become: yes
+  tasks:
+    - name: Mise à jour de la liste des paquets
+      apt:
+        update_cache: yes
+
+    - name: Installation des dépendances nécessaires
+      apt:
+        name:
+          - curl
+          - sudo
+          - git
+          - postgresql
+          - postgresql-contrib
+          - g++
+          - make
+          - python3-psycopg2
+          - nginx
+          - openssl  
+        state: present
+
+    - name: Vérification de l'existence de dhparam.pem
+      ansible.builtin.stat:
+        path: /etc/ssl/certs/dhparam.pem
+      register: dhparam_file
+
+    - name: Génération de dhparam.pem (peut prendre du temps)
+      command: openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
+      when: not dhparam_file.stat.exists
+
+    - name: Création de l'utilisateur de base de données PostgreSQL
+      postgresql_user:
+        name: "{{ postgres_user }}"
+        password: "{{ postgres_password }}"
+        priv: ALL
+        state: present
+
+    - name: Création de la base de données PostgreSQL
+      postgresql_db:
+        name: "{{ postgres_db }}"
+        owner: "{{ postgres_user }}"
+        state: present
+
+    - name: Configuration de Nginx pour PeerTube
+      template:
+        src: nginx_peertube.j2
+        dest: "/etc/nginx/sites-available/{{ peertube_hostname }}"
+      notify: restart nginx
+
+    - name: Activation du site PeerTube
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ peertube_hostname }}"
+        dest: "/etc/nginx/sites-enabled/{{ peertube_hostname }}"
+        state: link
+
+    - name: Suppression du lien pour la configuration par défaut de Nginx
+      file:
+        path: "/etc/nginx/sites-enabled/default"
+        state: absent
+
+    - name: Redémarrage de Nginx pour appliquer la configuration
+      systemd:
+        name: nginx
+        state: restarted
+        daemon_reload: yes
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        daemon_reload: yes
